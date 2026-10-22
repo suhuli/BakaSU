@@ -14,9 +14,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install reproducible kernel formatter
+        run: python3 -m pip install clang-format==19.1.7
+
       - name: Check
         working-directory: kernel
-        run: make check-format
+        run: |
+          clang-format --version
+          make check-format
 
   rustfmt:
     name: Rustfmt check
