@@ -3,6 +3,11 @@ name: Build Manager
 on:
   workflow_dispatch:
   push:
+    # Kernel-only compatibility branch reuses the unchanged, officially signed
+    # upstream manager. Do not start 16 unrelated LKM builds or require the
+    # upstream private signing secrets on a fork push.
+    branches-ignore:
+      - susfs-android12-5.10
     paths:
       - '.github/workflows/build-manager.yml'
       - '.github/workflows/build-lkm.yml'

@@ -48,6 +48,10 @@
 
 #ifdef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
 #define __maybe_static
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+#error BakaSU does NOT support susfs selinux_hide feature in nongki, Please remove the susfs selinux_hide related code in selinuxfs.c / services.c, selinux_hide still working, but it will handle in BakaSU instead of susfs.
+#endif
 #else
 #define __maybe_static static
 #endif
@@ -69,7 +73,6 @@ __maybe_static struct page *fake_status = NULL;
 static struct mutex *ksu_selinux_status_lock = NULL;
 __maybe_static void initialize_fake_status();
 
-#ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
 enum sel_inos {
     SEL_ROOT_INO = 2,
     SEL_LOAD, /* load policy */
@@ -97,8 +100,6 @@ enum sel_inos {
 typedef ssize_t (*write_op_fn)(struct file *, char *, size_t);
 
 static write_op_fn *selinux_write_op;
-
-#endif // #ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
 
 static int ksu_security_context_to_sid(struct policydb *orig_policydb, struct sidtab *orig_sidtab,
                                        struct policydb *policydb, struct sidtab *sidtab, const char *scontext,
@@ -170,14 +171,12 @@ static __nocfi void ksu_security_compute_av_user(struct policydb *policydb, stru
 #endif
 // clang-format on
 
-// remove static in susfs
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) || defined(KSU_COMPAT_HAS_SELINUX_POLICY_STRUCT)
-__maybe_static int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext,
-                                                       u32 scontext_len, u32 *sid, u32 def_sid, gfp_t gfp_flags,
-                                                       u32 *orig_sid_p, int *orig_rc_p);
+static int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext, u32 scontext_len,
+                                               u32 *sid, u32 def_sid, gfp_t gfp_flags, u32 *orig_sid_p, int *orig_rc_p);
 
-__maybe_static int security_sid_to_context_with_policy(struct selinux_policy *policy, u32 sid, char **scontext,
-                                                       u32 *scontext_len)
+static int security_sid_to_context_with_policy(struct selinux_policy *policy, u32 sid, char **scontext,
+                                               u32 *scontext_len)
 {
     struct policydb *policydb;
     struct sidtab *sidtab;
@@ -190,8 +189,8 @@ __maybe_static int security_sid_to_context_with_policy(struct selinux_policy *po
     return ksu_security_sid_to_context(policydb, sidtab, sid, scontext, scontext_len);
 }
 
-__maybe_static void security_compute_av_user_with_policy(struct selinux_policy *policy, u32 ssid, u32 tsid, u16 tclass,
-                                                         struct av_decision *avd)
+static void security_compute_av_user_with_policy(struct selinux_policy *policy, u32 ssid, u32 tsid, u16 tclass,
+                                                 struct av_decision *avd)
 {
     struct policydb *policydb;
     struct sidtab *sidtab;
@@ -205,8 +204,6 @@ __maybe_static void security_compute_av_user_with_policy(struct selinux_policy *
     ksu_security_compute_av_user(policydb, sidtab, ssid, tsid, tclass, avd);
 }
 #endif
-
-#ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
 
 static write_op_fn *context_write, *access_write;
 static write_op_fn orig_context_write, orig_access_write;
@@ -237,7 +234,7 @@ static inline u32 current_sid(void)
 }
 #endif
 
-static ssize_t my_write_context(struct file *file, char *buf, size_t size)
+__maybe_static ssize_t my_write_context(struct file *file, char *buf, size_t size)
 {
     // apply to all app uids
     if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
@@ -301,7 +298,7 @@ out:
     return length;
 }
 
-static ssize_t my_write_access(struct file *file, char *buf, size_t size)
+__maybe_static ssize_t my_write_access(struct file *file, char *buf, size_t size)
 {
     // apply to all app uids
     if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
@@ -451,6 +448,7 @@ int __nocfi ksu_handle_selinux_setprocattr(const char *name, void *value, size_t
 int __nocfi ksu_handle_selinux_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
 #endif
 {
+#ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
     if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
         goto call_orig;
     }
@@ -458,6 +456,7 @@ int __nocfi ksu_handle_selinux_setprocattr(struct task_struct *p, char *name, vo
     if (strcmp(name, "current")) {
         goto call_orig;
     }
+#endif
 
     struct ksu_task_security_struct *tsec;
     struct cred *new;
@@ -539,6 +538,7 @@ abort_change:
     abort_creds(new);
     return error;
 
+#ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
 call_orig:
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
     return ((setprocattr_fn)selinux_setprocattr_hook.original)(name, value, size);
@@ -547,8 +547,17 @@ call_orig:
 #else
     return ksu_orig_setprocattr(p, name, value, size);
 #endif
+#endif
 }
 
+#ifdef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
+int __nocfi my_setprocattr(const char *name, void *value, size_t size)
+{
+    return ksu_handle_selinux_setprocattr(name, value, size);
+}
+#endif
+
+#ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
 typedef int (*sel_open_handle_status_fn)(struct inode *inode, struct file *filp);
 static sel_open_handle_status_fn orig_sel_open_handle_status, *sel_open_handle_status_slot;
 static int my_sel_open_handle_status(struct inode *inode, struct file *filp)
@@ -642,6 +651,11 @@ static void ksu_selinux_hide_unhook()
 
 extern void ksu_register_setprocattr_lsm_hook();
 #else
+// susfs selinux_hide
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+struct selinux_state fake_state;
+#endif
+
 #define ksu_selinux_hide_unhook()                                                                                      \
     do {                                                                                                               \
     } while (0)
@@ -668,9 +682,15 @@ static int ksu_selinux_hide_enable()
     }
 #endif
 
-#ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
-    hook_selinux_status_open();
+#ifdef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+    fake_state.initialized = true;
+    fake_state.policy = backup_sepolicy;
 #endif
+
+#else
+    hook_selinux_status_open();
 
     // clang-format off
 #ifdef CONFIG_KALLSYMS_ALL
@@ -749,7 +769,6 @@ static int ksu_selinux_hide_enable()
 #endif
     // clang-format on
 
-#ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE
 #ifdef CONFIG_KALLSYMS_ALL
     selinux_write_op = (write_op_fn *)find_kernel_symbol_exact("write_op");
 #else
@@ -1210,11 +1229,9 @@ static inline void ksu_unlock_sepolicy_legacy(void)
 #endif
 }
 
-// remove static in susfs
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) || defined(KSU_COMPAT_HAS_SELINUX_POLICY_STRUCT)
-__maybe_static int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext,
-                                                       u32 scontext_len, u32 *sid, u32 def_sid, gfp_t gfp_flags,
-                                                       u32 *orig_sid_p, int *orig_rc_p)
+static int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext, u32 scontext_len,
+                                               u32 *sid, u32 def_sid, gfp_t gfp_flags, u32 *orig_sid_p, int *orig_rc_p)
 #else
 static int ksu_security_context_to_sid(struct policydb *orig_policydb, struct sidtab *orig_sidtab,
                                        struct policydb *policydb, struct sidtab *sidtab, const char *scontext,
@@ -1252,7 +1269,7 @@ static int ksu_security_context_to_sid(struct policydb *orig_policydb, struct si
     if (orig_sid_p)
         *orig_sid_p = SECSID_NULL;
 
-        // removed: if (force)
+    // removed: if (force)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0) || defined(KSU_COMPAT_HAS_SELINUX_POLICY_STRUCT)
     rcu_read_lock();
     orig_policy = rcu_dereference(selinux_state.policy);

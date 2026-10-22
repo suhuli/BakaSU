@@ -73,7 +73,19 @@ include $(KSU_SRC)/tools/ddk_compatible.mk
 endif
 
 $(shell cd $(KSU_SRC); [ -f ../.git/shallow ] && $(GIT_BIN) fetch --unshallow)
-KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)
+# Kernel-only SUSFS fixes do not change manager/userspace/UAPI. Keep their
+# versionCode paired with the trusted upstream APK, rather than incrementing
+# it for downstream-only commits. The workflow verifies the unchanged paths.
+KSU_VERSION_REF := HEAD
+ifeq ($(CONFIG_KSU_SUSFS),y)
+KSU_VERSION_REF := $(shell cat $(KSU_SRC)/tools/susfs_manager_commit)
+ifeq ($(shell cd $(KSU_SRC); $(GIT_BIN) cat-file -e $(KSU_VERSION_REF)^{commit} 2>/dev/null; echo $$?),0)
+$(info -- $(REPO_NAME) manager source commit: $(KSU_VERSION_REF))
+else
+$(error Missing upstream manager commit; use a full BakaSU clone)
+endif
+endif
+KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count $(KSU_VERSION_REF))
 KSU_VERSION := $(shell expr 30000 + $(KSU_LOCAL_VERSION) + 700)
 
 KSU_TAG_NAME    := $(shell cd $(KSU_SRC); $(GIT_BIN) describe --abbrev=0 --tags 2>/dev/null || echo "v4.1.0")
